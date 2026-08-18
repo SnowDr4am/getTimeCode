@@ -1,0 +1,9 @@
+services:
+  timecodes:
+    build: .
+    env_file: .env
+    volumes:
+      - ./source:/app/source:ro
+      - ./out:/app/out
+      - ./work:/app/work
+      - ./models:/models   # кэш весов Whisper, чтобы не качать при каждом запуске

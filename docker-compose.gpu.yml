@@ -1,0 +1,12 @@
+services:
+  timecodes:
+    environment:
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: int8_float16   # 4 ГБ VRAM на GTX 1650 хватает даже под large-v3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

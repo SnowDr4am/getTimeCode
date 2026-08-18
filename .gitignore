@@ -1,0 +1,15 @@
+.env
+
+# Входные видео, промежуточные wav/json и готовые таблицы
+source/*
+work/*
+out/*
+!source/.gitkeep
+!work/.gitkeep
+!out/.gitkeep
+
+# Кэш весов Whisper (HF_HOME)
+models/
+
+__pycache__/
+*.py[cod]
