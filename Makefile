@@ -1,7 +1,7 @@
 COMPOSE = docker compose
 GPU = $(COMPOSE) -f docker-compose.yml -f docker-compose.gpu.yml
 
-.PHONY: build run gpu logs stop shell clean
+.PHONY: build run gpu logs stop shell test clean
 
 build:
 	$(COMPOSE) build
@@ -24,6 +24,9 @@ stop:
 
 shell:
 	$(COMPOSE) run --rm --entrypoint bash timecodes
+
+test: build
+	$(COMPOSE) run --rm --entrypoint python3 timecodes -m pytest -q tests
 
 clean:
 	rm -rf work/*.wav

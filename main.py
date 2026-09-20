@@ -11,6 +11,8 @@ from collections import Counter
 from pathlib import Path
 
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 
@@ -25,6 +27,10 @@ WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE") or None
 CPU_THREADS = int(os.getenv("CPU_THREADS", "0"))  # 0 = по числу ядер
 BEAM_SIZE = int(os.getenv("BEAM_SIZE", "5"))
 PROGRESS_SEC = 120.0  # шаг лога прогресса по таймлайну видео
+SAMPLE_RATE = 16000    # whisper всё равно ресемплит к этой частоте
+VAD_SILENCE_MS = 500
+# Мел-спектрограмма считается сразу на весь вход, пик памяти линеен по длине дорожки.
+ASR_CHUNK_SEC = float(os.getenv("ASR_CHUNK_SEC", "1200"))
 
 BLOCK_SEC = float(os.getenv("BLOCK_SEC", "90"))          # целевая длина смыслового блока
 MIN_BLOCK_SEC = float(os.getenv("MIN_BLOCK_SEC", "25"))  # раньше неё по паузе не режем
@@ -81,41 +87,80 @@ def extract_audio(video: Path) -> Path:
         return wav
     print(f"[audio] извлекаю дорожку из {video.name}")
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+        ["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE),
          "-c:a", "pcm_s16le", "-loglevel", "error", "-stats", "-stats_period", "30", str(wav)],
         check=True,
     )
     return wav
 
 
+def chunk_bounds(gaps: list[float], total: float) -> list[tuple[float, float]]:
+    """Границы кусков распознавания по паузам между речью: стык не должен попадать
+    на середину слова. Пауз нет — режем жёстко, память важнее шва."""
+    if total <= ASR_CHUNK_SEC:
+        return [(0.0, total)]
+
+    bounds, start = [], 0.0
+    while total - start > ASR_CHUNK_SEC:
+        limit = start + ASR_CHUNK_SEC
+        cut = next((g for g in gaps if g > limit), None)
+        if cut is None or cut > limit + ASR_CHUNK_SEC:
+            cut = limit
+        bounds.append((start, cut))
+        start = cut
+    bounds.append((start, total))
+    return bounds
+
+
+def plan_chunks(audio) -> list[tuple[float, float]]:
+    total = len(audio) / SAMPLE_RATE
+    if total <= ASR_CHUNK_SEC:
+        return [(0.0, total)]
+    speech = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=VAD_SILENCE_MS))
+    gaps = [(prev["end"] + nxt["start"]) / 2 / SAMPLE_RATE
+            for prev, nxt in zip(speech, speech[1:])]
+    return chunk_bounds(gaps, total)
+
+
 def run_asr(wav: Path, device: str, compute_type: str) -> list[dict]:
     print(f"[whisper] модель={WHISPER_MODEL} device={device} compute={compute_type}")
+    audio = decode_audio(str(wav), sampling_rate=SAMPLE_RATE)
+    duration = len(audio) / SAMPLE_RATE
+    chunks = plan_chunks(audio)
+    print(f"[whisper] длительность={hms(duration)}, кусков={len(chunks)}")
+
     model = WhisperModel(WHISPER_MODEL, device=device, compute_type=compute_type,
                          cpu_threads=CPU_THREADS)
-    segments, info = model.transcribe(
-        str(wav),
-        language=WHISPER_LANGUAGE,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 500},
-        beam_size=BEAM_SIZE,
-    )
-    print(f"[whisper] язык={info.language} длительность={hms(info.duration)}")
-
     result = []
+    language = WHISPER_LANGUAGE
     started, reported = time.monotonic(), 0.0
-    for seg in segments:
-        text = seg.text.strip()
-        if not text:
-            continue
-        result.append({"start": seg.start, "end": seg.end, "text": text})
-        # Отдельными строками, а не \r: docker logs не отдаёт незавершённую строку.
-        if seg.end - reported >= PROGRESS_SEC:
-            reported = seg.end
-            elapsed = time.monotonic() - started
-            speed = seg.end / elapsed
-            eta = (info.duration - seg.end) / speed
-            print(f"[whisper] {hms(seg.end)} / {hms(info.duration)} "
-                  f"({speed:.2f}x, осталось ~{hms(eta)})", flush=True)
+    for offset, end in chunks:
+        segments, info = model.transcribe(
+            audio[int(offset * SAMPLE_RATE):int(end * SAMPLE_RATE)],
+            language=language,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": VAD_SILENCE_MS},
+            beam_size=BEAM_SIZE,
+        )
+        # Определённый на первом куске язык фиксируем: на следующих он может «переключиться».
+        if language is None:
+            language = info.language
+            print(f"[whisper] язык={language}")
+
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+            at = offset + seg.end
+            result.append({"start": offset + seg.start, "end": at, "text": text})
+            # Отдельными строками, а не \r: docker logs не отдаёт незавершённую строку.
+            if at - reported >= PROGRESS_SEC:
+                reported = at
+                elapsed = time.monotonic() - started
+                speed = at / elapsed
+                eta = (duration - at) / speed
+                print(f"[whisper] {hms(at)} / {hms(duration)} "
+                      f"({speed:.2f}x, осталось ~{hms(eta)})", flush=True)
     return result
 
 
