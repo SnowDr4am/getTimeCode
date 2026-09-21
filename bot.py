@@ -12,6 +12,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
+from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
 from aiogram.types import BufferedInputFile, Message, ReplyParameters
 
@@ -26,8 +27,17 @@ DOWNLOAD_TIMEOUT_SEC = 3600
 
 log = logging.getLogger(__name__)
 router = Router()
-# Чужим бот не отвечает: сообщения без подходящего хендлера aiogram молча пропускает.
-router.message.filter(F.from_user.id.in_(config.ACCESS_IDS))
+
+
+def allowed(message: Message) -> bool:
+    """Только личка: в группе тайм-коды и расшифровку увидели бы все её участники.
+    Остальные апдейты (правки, inline, колбэки) хендлеров не имеют и пропускаются молча."""
+    user = message.from_user
+    return (message.chat.type == ChatType.PRIVATE
+            and user is not None and user.id in config.ACCESS_IDS)
+
+
+router.message.filter(allowed)
 
 
 def humanize(seconds: float) -> str:
