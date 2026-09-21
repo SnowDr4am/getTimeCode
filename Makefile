@@ -1,20 +1,13 @@
 COMPOSE = docker compose
-GPU = $(COMPOSE) -f docker-compose.yml -f docker-compose.gpu.yml
 
-.PHONY: build run gpu logs stop shell test clean
+.PHONY: build up logs stop test
 
 build:
 	$(COMPOSE) build
 
-# Запуск детачем: закрытый терминал не обрывает распознавание.
-run: build
-	$(COMPOSE) up -d --force-recreate
-	$(COMPOSE) logs -f
-
-gpu:
-	$(GPU) build
-	$(GPU) up -d --force-recreate
-	$(GPU) logs -f
+up: build
+	$(COMPOSE) up -d
+	$(COMPOSE) logs -f bot
 
 logs:
 	$(COMPOSE) logs -f
@@ -22,11 +15,5 @@ logs:
 stop:
 	$(COMPOSE) down
 
-shell:
-	$(COMPOSE) run --rm --entrypoint bash timecodes
-
 test: build
-	$(COMPOSE) run --rm --entrypoint python3 timecodes -m pytest -q tests
-
-clean:
-	rm -rf work/*.wav
+	$(COMPOSE) run --rm --no-deps bot python -m pytest -q

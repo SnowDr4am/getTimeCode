@@ -1,9 +1,39 @@
+name: timecodes
+
+# Логи без ротации растут без предела, а диск общий с соседними проектами.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
-  timecodes:
-    build: .
-    env_file: .env
+  bot-api:
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TG_API_ID}
+      TELEGRAM_API_HASH: ${TG_API_HASH}
+      TELEGRAM_LOCAL: "1"   # файлы до 2 ГБ и абсолютный путь вместо ссылки в getFile
     volumes:
-      - ./source:/app/source:ro
-      - ./out:/app/out
-      - ./work:/app/work
-      - ./models:/models   # кэш весов Whisper, чтобы не качать при каждом запуске
+      - botapi:/var/lib/telegram-bot-api
+    mem_limit: 512m
+    logging: *logging
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - bot-api
+    volumes:
+      - botapi:/var/lib/telegram-bot-api
+      - models:/models   # кэш весов Whisper, чтобы не качать при каждом запуске
+    # Сервер общий: распознавание не должно забирать оба ядра и всю память у соседей.
+    cpus: 1.5
+    mem_limit: 2g
+    logging: *logging
+
+volumes:
+  botapi:
+  models:

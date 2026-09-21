@@ -1,17 +1,15 @@
 .env
 
-# Входные видео, промежуточные wav/json и готовые таблицы
-source/*
-work/*
-out/*
-!source/.gitkeep
-!work/.gitkeep
-!out/.gitkeep
+# Локальные прогоны: видео, звук, результаты
+source/
+work/
+out/
 
 # Кэш весов Whisper (HF_HOME)
 models/
 
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 .idea/
