@@ -5,6 +5,7 @@ import pytest
 import asr
 import llm
 import pipeline
+import timecodes
 from jobs import Job
 
 
@@ -19,7 +20,8 @@ class _Sender:
         self.files.append((name, data.decode(), caption))
 
 
-SEGMENTS = [{"start": 0.0, "end": 5.0, "text": "Всем привет."},
+# Длинная пауза после 30 с делит расшифровку на два блока: [00:00] и [01:05].
+SEGMENTS = [{"start": 0.0, "end": 30.0, "text": "Всем привет."},
             {"start": 65.0, "end": 70.0, "text": "Главная мысль."}]
 
 
@@ -49,18 +51,18 @@ async def test_успех_тайм_коды_и_расшифровка(job, monke
 
     async def complete(system, user):
         prompts.append((system, user))
-        return "00:00 Привет\n01:05 Главное"
+        return "Вот тайм-коды:\n[00:03] 🔥 Привет\n01:05 — Главное\nХочешь жёстче — скажи."
 
     monkeypatch.setattr(llm, "complete", complete)
     sender = _Sender()
     await pipeline.process(job, sender)
 
-    assert sender.texts == ["00:00 Привет\n01:05 Главное"]
+    assert sender.texts == ["00:00 — Привет\n01:05 — Главное"]
     name, data, caption = sender.files[0]
     assert name == "эфир.txt"
-    assert data.startswith(pipeline.SYSTEM_PROMPT)
-    assert "[00:00:00] Всем привет. Главная мысль." in data
-    assert prompts[0][0] == pipeline.SYSTEM_PROMPT
+    assert data.startswith(timecodes.SYSTEM_PROMPT)
+    assert "[00:00] Всем привет.\n[01:05] Главная мысль." in data
+    assert prompts[0][0] == timecodes.SYSTEM_PROMPT
     assert _leftovers(job) == []
 
 
@@ -74,7 +76,8 @@ async def test_ошибка_llm_отдаёт_файл_с_промптом(job, m
 
     assert sender.texts == []
     name, data, caption = sender.files[0]
-    assert data.startswith(pipeline.SYSTEM_PROMPT + "\n\n[00:00:00]")
+    assert data.startswith(timecodes.SYSTEM_PROMPT + "\n\nДлительность эфира: 01:10. Нужно")
+    assert data.rstrip().endswith("[00:00] Всем привет.\n[01:05] Главная мысль.")
     assert "HTTP 500" in caption
     assert _leftovers(job) == []
 

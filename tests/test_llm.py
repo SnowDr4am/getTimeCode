@@ -1,5 +1,7 @@
 """Разбор ответов шлюза Kie и повторы. Шлюз подменяется локальным aiohttp-сервером."""
 
+import json
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -50,12 +52,43 @@ def test_не_json():
         llm.parse_response(502, None)
 
 
+class SSE(list):
+    """Тело-стрим: список событий (имя, данные) отдаётся кусками по 7 байт — строки
+    намеренно рвутся посередине, как в реальной сети."""
+
+
+def _sse(events: SSE) -> bytes:
+    text = ": keepalive\n\n"
+    for name, data in events:
+        text += f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return text.encode()
+
+
+def _stream(text: str = "00:00 Начало") -> SSE:
+    return SSE([
+        ("response.created", {"type": "response.created", "response": {"output": []}}),
+        ("response.output_text.delta", {"type": "response.output_text.delta", "delta": text}),
+        # В реальном стриме Kie у финального события нет поля type — только имя event.
+        ("response.completed", {"response": {**OK, "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": text}]}]}}),
+    ])
+
+
 async def _serve(responses: list[tuple[int, object]]):
     calls = []
 
-    async def handler(request: web.Request) -> web.Response:
+    async def handler(request: web.Request) -> web.StreamResponse:
         calls.append(await request.json())
         status, body = responses[min(len(calls), len(responses)) - 1]
+        if isinstance(body, SSE):
+            resp = web.StreamResponse(status=status,
+                                      headers={"Content-Type": "text/event-stream"})
+            await resp.prepare(request)
+            data = _sse(body)
+            for i in range(0, len(data), 7):
+                await resp.write(data[i:i + 7])
+            await resp.write_eof()
+            return resp
         if isinstance(body, str):
             return web.Response(status=status, text=body)
         return web.json_response(body, status=status)
@@ -77,8 +110,42 @@ async def test_запрос_с_промптом_и_расшифровкой(monk
 
     assert text == "00:00 Начало"
     assert calls[0]["model"] == llm.MODEL
+    assert calls[0]["stream"] is True
     assert calls[0]["instructions"] == "промпт"
     assert calls[0]["input"][0]["content"][0]["text"] == "расшифровка"
+
+
+async def test_ответ_из_стрима():
+    long_text = "\n".join(f"{i:02d}:00 — Тема {'x' * 3000}" for i in range(40))
+    server, calls = await _serve([(200, _stream(long_text))])
+    try:
+        text = await llm.complete("p", "u", url=str(server.make_url("/responses")))
+    finally:
+        await server.close()
+    assert text == long_text  # финальное событие > 64 КБ одной строкой
+
+
+async def test_ошибка_в_стриме_повторяется():
+    failed = SSE([("response.failed", {"type": "response.failed",
+                                       "response": {"error": {"message": "overloaded"}}})])
+    server, calls = await _serve([(200, failed), (200, _stream())])
+    try:
+        assert await llm.complete("p", "u", url=str(server.make_url("/responses"))) \
+            == "00:00 Начало"
+    finally:
+        await server.close()
+    assert len(calls) == 2
+
+
+async def test_оборванный_стрим_это_ошибка():
+    cut = SSE(_stream()[:2])
+    server, calls = await _serve([(200, cut)])
+    try:
+        with pytest.raises(llm.LLMError, match="оборвался"):
+            await llm.complete("p", "u", url=str(server.make_url("/responses")))
+    finally:
+        await server.close()
+    assert len(calls) == llm.ATTEMPTS
 
 
 async def test_сбой_шлюза_повторяется():

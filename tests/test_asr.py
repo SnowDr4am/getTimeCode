@@ -107,12 +107,6 @@ def test_длинная_речь_без_пауз_режется_по_длине(
     assert blocks[-1]["end"] == 200
 
 
-def test_расшифровка_с_таймкодами_блоков():
-    blocks = [{"start": 0, "end": 30, "text": "Привет."},
-              {"start": 3725.4, "end": 3800, "text": "Итог."}]
-    assert asr.render_transcript(blocks) == "[00:00:00] Привет.\n[01:02:05] Итог."
-
-
 async def test_длительность_и_звук_через_ffmpeg(tmp_path):
     """Реальный ffmpeg: 3 секунды тона -> PCM ровно на 3 секунды."""
     src = tmp_path / "tone.mp4"

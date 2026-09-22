@@ -7,9 +7,9 @@ from typing import Protocol
 
 import asr
 import llm
+import timecodes
 from jobs import Job
 
-SYSTEM_PROMPT = "Сделай кликбейтные тайм-коды для ролика на YouTube, вот расшифровка."
 MESSAGE_LIMIT = 4096  # предел длины сообщения Telegram
 ERROR_LIMIT = 300     # подпись ограничена 1024 символами, тело ошибки шлюза бывает длиннее
 
@@ -66,13 +66,14 @@ async def process(job: Job, sender: Sender) -> None:
         await sender.text(job.chat_id, "Речь в эфире не распознана.", job.reply_to)
         return
 
-    transcript = asr.render_transcript(asr.split_blocks(segments))
+    blocks = asr.split_blocks(segments)
+    prompt = timecodes.request(timecodes.render_transcript(blocks), job.duration)
     # Промпт в начале файла: при сбое LLM файл целиком скармливается любой нейросети вручную.
-    document = f"{SYSTEM_PROMPT}\n\n{transcript}\n".encode()
+    document = f"{timecodes.SYSTEM_PROMPT}\n\n{prompt}\n".encode()
     name = f"{job.title}.txt"
 
     try:
-        timecodes = await llm.complete(SYSTEM_PROMPT, transcript)
+        answer = await llm.complete(timecodes.SYSTEM_PROMPT, prompt)
     except llm.LLMError as exc:
         log.error("LLM для %s: %s", job.title, exc)
         await sender.file(
@@ -83,6 +84,7 @@ async def process(job: Job, sender: Sender) -> None:
         )
         return
 
-    for part in split_message(timecodes):
+    marks = [b["start"] for b in blocks]
+    for part in split_message(timecodes.normalize(answer, marks)):
         await sender.text(job.chat_id, part, job.reply_to)
     await sender.file(job.chat_id, name, document, "Расшифровка эфира", job.reply_to)

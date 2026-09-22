@@ -1,4 +1,4 @@
-"""Звук из видео -> сегменты речи с таймкодами -> текст по смысловым блокам."""
+"""Звук из видео -> сегменты речи с таймкодами -> смысловые блоки."""
 
 import asyncio
 import json
@@ -176,7 +176,3 @@ def split_blocks(segments: list[dict]) -> list[dict]:
             flush()
     flush()
     return blocks
-
-
-def render_transcript(blocks: list[dict]) -> str:
-    return "\n".join(f"[{hms(b['start'])}] {b['text']}" for b in blocks)
