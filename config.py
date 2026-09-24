@@ -10,7 +10,6 @@ def parse_ids(raw: str) -> frozenset[int]:
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-KIE_API_KEY = os.getenv("KIE_API_KEY", "")
 # Остальным пользователям бот не отвечает вовсе.
 ACCESS_IDS = parse_ids(os.getenv("ACCESS_IDS", ""))
 

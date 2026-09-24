@@ -1,7 +1,4 @@
-"""Промпт для тайм-кодов и приведение ответа LLM к формату глав YouTube."""
-
-import re
-import unicodedata
+"""Промпт для тайм-кодов в формате глав YouTube."""
 
 SYSTEM_PROMPT = """\
 Ты — редактор YouTube-канала. По расшифровке эфира составь кликбейтные тайм-коды \
@@ -36,15 +33,6 @@ SYSTEM_PROMPT = """\
 DENSE_SEC, SPARSE_SEC = 150, 240
 MIN_TIMECODES = 3  # меньше трёх глав YouTube не показывает
 
-# Время в начале строки, возможно в скобках, после маркера списка или жирного выделения.
-LINE_RE = re.compile(
-    r"^[\s>*\-•\d.)]*?[\[(*]*"
-    r"(?:(?P<h>\d{1,2}):)?(?P<m>\d{1,2}):(?P<s>\d{2})"
-    r"[\])*]*\s*[—–\-:|]*\s*(?P<title>.+)$"
-)
-# Модификаторы эмодзи: вариационный селектор и склейка ZWJ — у них категория не So.
-EMOJI_GLUE = {"️", "‍"}
-
 
 def fmt(seconds: float) -> str:
     h, rest = divmod(int(seconds), 3600)
@@ -66,39 +54,3 @@ def request(transcript: str, duration: float) -> str:
     count = f"{low}–{high}" if high > low else str(low)
     return (f"Длительность эфира: {fmt(duration)}. Нужно {count} тайм-кодов, "
             f"последний — в последние 10 минут эфира.\n\nРасшифровка:\n{transcript}")
-
-
-def clean_title(title: str) -> str:
-    title = "".join(c for c in title
-                    if unicodedata.category(c) != "So" and c not in EMOJI_GLUE)
-    title = title.replace("**", "").replace("__", "").replace("`", "")
-    return re.sub(r"\s+", " ", title).strip(" —–-:|")
-
-
-def normalize(answer: str, marks: list[float]) -> str:
-    """Строки с тайм-кодами в формате YouTube; всё остальное (вступление, эмодзи,
-    приглашение «сделать жёстче») выбрасывается. Время привязывается к ближайшей метке
-    блока из расшифровки — выдуманное моделью время превращается в настоящее начало блока.
-    Первая глава YouTube обязана начинаться с 00:00, иначе главы не создаются.
-    Нет ни одного тайм-кода — ответ как есть."""
-    items: dict[int, str] = {}
-    for line in answer.splitlines():
-        match = LINE_RE.match(line.strip())
-        if not match:
-            continue
-        m, s = int(match["m"]), int(match["s"])
-        if s >= 60 or (match["h"] and m >= 60):
-            continue
-        title = clean_title(match["title"])
-        if not title:
-            continue
-        at = int(match["h"] or 0) * 3600 + m * 60 + s
-        if marks:
-            at = int(min(marks, key=lambda mark: abs(mark - at)))
-        items.setdefault(at, title)
-    if not items:
-        return answer.strip()
-
-    ordered = sorted(items.items())
-    ordered[0] = (0, ordered[0][1])
-    return "\n".join(f"{fmt(at)} — {title}" for at, title in ordered)

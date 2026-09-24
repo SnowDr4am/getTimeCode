@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-# Извлечение звука, запуск модели и ответ LLM поверх самого распознавания.
+# Извлечение звука и запуск модели поверх самого распознавания.
 OVERHEAD_SEC = 300.0
 # Текущая задача может затянуться дольше оценки — «0 минут» в ответе вводил бы в заблуждение.
 MIN_REMAINING_SEC = 60.0

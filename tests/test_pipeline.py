@@ -1,9 +1,8 @@
-"""Эфир целиком: ответ пользователю и уборка файлов. Распознавание и LLM подменены."""
+"""Эфир целиком: ответ пользователю и уборка файлов. Распознавание подменено."""
 
 import pytest
 
 import asr
-import llm
 import pipeline
 import timecodes
 from jobs import Job
@@ -46,39 +45,15 @@ def _leftovers(job):
     return list(job.source.parent.iterdir())
 
 
-async def test_успех_тайм_коды_и_расшифровка(job, monkeypatch):
-    prompts = []
-
-    async def complete(system, user):
-        prompts.append((system, user))
-        return "Вот тайм-коды:\n[00:03] 🔥 Привет\n01:05 — Главное\nХочешь жёстче — скажи."
-
-    monkeypatch.setattr(llm, "complete", complete)
-    sender = _Sender()
-    await pipeline.process(job, sender)
-
-    assert sender.texts == ["00:00 — Привет\n01:05 — Главное"]
-    name, data, caption = sender.files[0]
-    assert name == "эфир.txt"
-    assert data.startswith(timecodes.SYSTEM_PROMPT)
-    assert "[00:00] Всем привет.\n[01:05] Главная мысль." in data
-    assert prompts[0][0] == timecodes.SYSTEM_PROMPT
-    assert _leftovers(job) == []
-
-
-async def test_ошибка_llm_отдаёт_файл_с_промптом(job, monkeypatch):
-    async def complete(system, user):
-        raise llm.LLMError("HTTP 500: boom")
-
-    monkeypatch.setattr(llm, "complete", complete)
+async def test_успех_только_файл_с_промптом_и_расшифровкой(job):
     sender = _Sender()
     await pipeline.process(job, sender)
 
     assert sender.texts == []
-    name, data, caption = sender.files[0]
+    [(name, data, caption)] = sender.files
+    assert name == "эфир.txt"
     assert data.startswith(timecodes.SYSTEM_PROMPT + "\n\nДлительность эфира: 01:10. Нужно")
     assert data.rstrip().endswith("[00:00] Всем привет.\n[01:05] Главная мысль.")
-    assert "HTTP 500" in caption
     assert _leftovers(job) == []
 
 
@@ -103,15 +78,3 @@ async def test_тишина(job, monkeypatch):
     sender = _Sender()
     await pipeline.process(job, sender)
     assert sender.texts == ["Речь в эфире не распознана."]
-
-
-def test_длинный_ответ_режется_по_строкам():
-    text = "\n".join(f"{i:02d}:00 строка {'x' * 50}" for i in range(200))
-    parts = pipeline.split_message(text, limit=1000)
-    assert all(len(p) <= 1000 for p in parts)
-    assert "\n".join(parts) == text
-
-
-def test_сверхдлинная_строка_тоже_режется():
-    parts = pipeline.split_message("x" * 2500, limit=1000)
-    assert [len(p) for p in parts] == [1000, 1000, 500]

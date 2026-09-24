@@ -1,4 +1,4 @@
-"""Telegram-бот: принимает эфир, ставит в очередь, возвращает тайм-коды."""
+"""Telegram-бот: принимает эфир, ставит в очередь, возвращает расшифровку с промптом."""
 
 import asyncio
 import logging
@@ -71,7 +71,7 @@ class TelegramSender:
 @router.message(CommandStart())
 async def start(message: Message) -> None:
     await message.answer("Пришли запись эфира видео- или аудиофайлом (до 2 ГБ) — "
-                         "верну тайм-коды для YouTube и расшифровку.")
+                         "верну .txt с расшифровкой и промптом для тайм-кодов YouTube.")
 
 
 @router.message(F.video | F.audio | F.document)
@@ -124,8 +124,8 @@ async def hint(message: Message) -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if not config.BOT_TOKEN or not config.KIE_API_KEY or not config.ACCESS_IDS:
-        raise SystemExit("В .env нужны BOT_TOKEN, KIE_API_KEY и ACCESS_IDS")
+    if not config.BOT_TOKEN or not config.ACCESS_IDS:
+        raise SystemExit("В .env нужны BOT_TOKEN и ACCESS_IDS")
 
     # Очередь живёт в памяти: после рестарта недоделанные файлы никому не нужны.
     shutil.rmtree(config.WORK_DIR, ignore_errors=True)

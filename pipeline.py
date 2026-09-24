@@ -1,4 +1,4 @@
-"""Обработка одного эфира: звук -> расшифровка -> тайм-коды от LLM -> ответ в чат.
+"""Обработка одного эфира: звук -> расшифровка -> .txt с промптом в чат.
 
 Ни видео, ни результаты не хранятся: всё удаляется сразу после ответа."""
 
@@ -6,12 +6,10 @@ import logging
 from typing import Protocol
 
 import asr
-import llm
 import timecodes
 from jobs import Job
 
-MESSAGE_LIMIT = 4096  # предел длины сообщения Telegram
-ERROR_LIMIT = 300     # подпись ограничена 1024 символами, тело ошибки шлюза бывает длиннее
+ERROR_LIMIT = 300  # текст исключения бывает длиннее разумного сообщения
 
 log = logging.getLogger(__name__)
 
@@ -21,25 +19,6 @@ class Sender(Protocol):
 
     async def file(self, chat_id: int, name: str, data: bytes, caption: str,
                    reply_to: int) -> None: ...
-
-
-def split_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
-    """Режем по строкам, чтобы тайм-код не разорвался между сообщениями."""
-    parts, current = [], ""
-    for line in text.splitlines(keepends=True):
-        while len(line) > limit:
-            if current:
-                parts.append(current)
-                current = ""
-            parts.append(line[:limit])
-            line = line[limit:]
-        if len(current) + len(line) > limit:
-            parts.append(current)
-            current = ""
-        current += line
-    if current.strip():
-        parts.append(current)
-    return [p.strip() for p in parts if p.strip()]
 
 
 async def transcribe(job: Job) -> list[dict]:
@@ -68,23 +47,7 @@ async def process(job: Job, sender: Sender) -> None:
 
     blocks = asr.split_blocks(segments)
     prompt = timecodes.request(timecodes.render_transcript(blocks), job.duration)
-    # Промпт в начале файла: при сбое LLM файл целиком скармливается любой нейросети вручную.
+    # Промпт в начале файла: файл целиком отправляется в любую нейросеть.
     document = f"{timecodes.SYSTEM_PROMPT}\n\n{prompt}\n".encode()
-    name = f"{job.title}.txt"
-
-    try:
-        answer = await llm.complete(timecodes.SYSTEM_PROMPT, prompt)
-    except llm.LLMError as exc:
-        log.error("LLM для %s: %s", job.title, exc)
-        await sender.file(
-            job.chat_id, name, document,
-            f"Нейросеть не ответила ({str(exc)[:ERROR_LIMIT]}). В файле промпт и расшифровка — "
-            "их можно отправить в любую нейросеть вручную.",
-            job.reply_to,
-        )
-        return
-
-    marks = [b["start"] for b in blocks]
-    for part in split_message(timecodes.normalize(answer, marks)):
-        await sender.text(job.chat_id, part, job.reply_to)
-    await sender.file(job.chat_id, name, document, "Расшифровка эфира", job.reply_to)
+    await sender.file(job.chat_id, f"{job.title}.txt", document,
+                      "Промпт и расшифровка эфира — отправь файл в нейросеть.", job.reply_to)
